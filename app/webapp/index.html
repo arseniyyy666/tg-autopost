@@ -7,34 +7,94 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
     body {
       margin: 0; padding: 20px;
       font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
       background: var(--tg-theme-bg-color, #ffffff);
       color: var(--tg-theme-text-color, #111111);
     }
-    h1 { font-size: 20px; margin: 0 0 12px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 0 0 8px; }
     .card {
       background: var(--tg-theme-secondary-bg-color, #f1f1f1);
-      border-radius: 12px; padding: 16px; margin-top: 12px;
+      border-radius: 12px; padding: 16px; margin-top: 14px;
     }
-    .muted { color: var(--tg-theme-hint-color, #777777); font-size: 14px; }
-    .error { color: #d33; }
+    .muted { color: var(--tg-theme-hint-color, #777777); font-size: 14px; line-height: 1.4; }
+    .error { color: #d33; font-size: 14px; margin-top: 8px; min-height: 18px; }
+    input[type=text], input[type=tel], input[type=password] {
+      width: 100%; padding: 12px; font-size: 16px; margin-top: 8px;
+      border: 1px solid var(--tg-theme-hint-color, #bbb); border-radius: 8px;
+      background: var(--tg-theme-bg-color, #fff); color: var(--tg-theme-text-color, #111);
+    }
+    button {
+      width: 100%; margin-top: 12px; padding: 12px; font-size: 16px; border: 0; border-radius: 8px;
+      background: var(--tg-theme-button-color, #2481cc); color: var(--tg-theme-button-text-color, #fff);
+    }
+    button.secondary { background: transparent; color: var(--tg-theme-link-color, #2481cc); }
+    button.danger { background: #d33; color: #fff; }
+    button:disabled { opacity: 0.5; }
+    label.check { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; font-size: 14px; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
   <h1>TG Autopost</h1>
   <div id="status" class="muted">Загрузка…</div>
-  <div id="card" class="card" hidden>
-    <div id="hello"></div>
-    <div id="meta" class="muted"></div>
+
+  <div id="main" hidden>
+    <div id="hello" class="muted"></div>
+
+    <div id="accounts" class="card">
+      <h2>Мой аккаунт Telegram</h2>
+      <div id="account-info"></div>
+      <button id="btn-disconnect" class="danger" hidden>Отключить аккаунт</button>
+    </div>
+
+    <div id="connect" class="card" hidden>
+      <h2>Подключить аккаунт</h2>
+
+      <div id="step-info">
+        <p class="muted">
+          Сервис будет отправлять сообщения от имени вашего аккаунта по вашим настройкам.
+          Для этого он сохраняет сессию входа в зашифрованном виде. Код входа и пароль
+          не сохраняются. Отключить аккаунт и удалить сессию можно в любой момент.
+          Подключайте только свой аккаунт и отправляйте сообщения только тем, кому вам
+          разрешено писать.
+        </p>
+        <label class="check"><input type="checkbox" id="consent"> <span>Я понимаю и согласен(на)</span></label>
+        <button id="btn-begin" disabled>Продолжить</button>
+      </div>
+
+      <div id="step-phone" hidden>
+        <div class="muted">Номер телефона в международном формате</div>
+        <input type="tel" id="phone" placeholder="+351912345678" autocomplete="off">
+        <button id="btn-phone">Получить код</button>
+      </div>
+
+      <div id="step-code" hidden>
+        <div id="code-hint" class="muted"></div>
+        <div class="muted" style="margin-top:6px">Введите код здесь и не пересылайте его в чаты.</div>
+        <input type="text" id="code" inputmode="numeric" placeholder="Код" autocomplete="off">
+        <button id="btn-code">Войти</button>
+      </div>
+
+      <div id="step-password" hidden>
+        <div class="muted">Включена двухэтапная проверка. Введите облачный пароль Telegram.</div>
+        <input type="password" id="password" placeholder="Пароль" autocomplete="off">
+        <button id="btn-password">Подтвердить</button>
+      </div>
+
+      <div id="error" class="error"></div>
+      <button id="btn-cancel" class="secondary" hidden>Отмена</button>
+    </div>
   </div>
 
   <script>
     (function () {
       var tg = window.Telegram && window.Telegram.WebApp;
-      var statusEl = document.getElementById("status");
-      var cardEl = document.getElementById("card");
+      var $ = function (id) { return document.getElementById(id); };
+      var statusEl = $("status");
 
       if (!tg || !tg.initData) {
         statusEl.textContent = "Откройте приложение из Telegram через кнопку в боте.";
@@ -44,18 +104,151 @@
       tg.ready();
       tg.expand();
 
-      fetch("/api/me", { headers: { "Authorization": "tma " + tg.initData } })
-        .then(function (r) {
-          if (!r.ok) { throw new Error("HTTP " + r.status); }
-          return r.json();
-        })
+      function api(method, path, body) {
+        var opts = { method: method, headers: { "Authorization": "tma " + tg.initData } };
+        if (body !== undefined) {
+          opts.headers["Content-Type"] = "application/json";
+          opts.body = JSON.stringify(body);
+        }
+        return fetch(path, opts).then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (data) {
+            if (!r.ok) {
+              var err = new Error(data.message || "Ошибка запроса");
+              err.data = data;
+              throw err;
+            }
+            return data;
+          });
+        });
+      }
+
+      var accepted = false;
+      var DELIVERY = {
+        app: "Код отправлен в приложение Telegram на другом вашем устройстве, где аккаунт уже открыт (чат «Telegram» / служебные уведомления). По SMS он не придёт.",
+        sms: "Код отправлен по SMS на этот номер.",
+        call: "Telegram позвонит на этот номер и продиктует код.",
+        email: "Код отправлен на почту, привязанную к аккаунту.",
+        other: "Код отправлен. Проверьте приложение Telegram и SMS."
+      };
+      function firstStep() { return accepted ? "step-phone" : "step-info"; }
+
+      function show(step) {
+        ["step-info", "step-phone", "step-code", "step-password"].forEach(function (id) {
+          $(id).hidden = (id !== step);
+        });
+        $("btn-cancel").hidden = (step === "step-info");
+        $("error").textContent = "";
+      }
+      function showError(e) {
+        var msg = e.message || "Ошибка";
+        if (e.data && e.data.retry_after) { msg += " (через " + e.data.retry_after + " с)"; }
+        $("error").textContent = msg;
+      }
+      function busy(btn, on) { btn.disabled = on; }
+
+      function renderAccounts(list) {
+        var info = $("account-info");
+        info.textContent = "";
+        if (list.length === 0) {
+          info.className = "muted";
+          info.textContent = "Аккаунт не подключён.";
+          $("btn-disconnect").hidden = true;
+          $("connect").hidden = false;
+          show(firstStep());
+          return;
+        }
+        var a = list[0];
+        info.className = "";
+        var name = document.createElement("div");
+        name.textContent = a.display_name + (a.username ? " (@" + a.username + ")" : "");
+        var st = document.createElement("div");
+        st.className = "muted";
+        st.textContent = "Статус: " + (a.status === "active" ? "подключён" : a.status);
+        info.appendChild(name);
+        info.appendChild(st);
+        $("btn-disconnect").hidden = false;
+        $("btn-disconnect").dataset.id = a.id;
+        $("connect").hidden = true;
+      }
+
+      function loadAccounts() {
+        return api("GET", "/api/accounts").then(function (d) { renderAccounts(d.accounts); });
+      }
+
+      $("consent").addEventListener("change", function () {
+        $("btn-begin").disabled = !this.checked;
+      });
+      $("btn-begin").addEventListener("click", function () {
+        var btn = this; busy(btn, true);
+        api("POST", "/api/consent")
+          .then(function () { accepted = true; show("step-phone"); })
+          .catch(showError)
+          .then(function () { busy(btn, false); });
+      });
+
+      $("btn-phone").addEventListener("click", function () {
+        var btn = this; busy(btn, true);
+        api("POST", "/api/accounts/login/start", { phone: $("phone").value })
+          .then(function (d) {
+            $("code-hint").textContent = DELIVERY[d.delivery] || DELIVERY.other;
+            show("step-code");
+            $("code").focus();
+          })
+          .catch(showError)
+          .then(function () { busy(btn, false); });
+      });
+
+      $("btn-code").addEventListener("click", function () {
+        var btn = this; busy(btn, true);
+        api("POST", "/api/accounts/login/code", { code: $("code").value })
+          .then(function (d) {
+            $("code").value = "";
+            if (d.status === "password_needed") { show("step-password"); $("password").focus(); }
+            else { return loadAccounts(); }
+          })
+          .catch(function (e) {
+            showError(e);
+            if (e.data && ["code_expired", "no_login", "too_many_attempts"].indexOf(e.data.error) >= 0) {
+              $("code").value = "";
+            }
+          })
+          .then(function () { busy(btn, false); });
+      });
+
+      $("btn-password").addEventListener("click", function () {
+        var btn = this; busy(btn, true);
+        api("POST", "/api/accounts/login/password", { password: $("password").value })
+          .then(function () { $("password").value = ""; return loadAccounts(); })
+          .catch(showError)
+          .then(function () { busy(btn, false); });
+      });
+
+      $("btn-cancel").addEventListener("click", function () {
+        $("phone").value = ""; $("code").value = ""; $("password").value = "";
+        api("POST", "/api/accounts/login/cancel").catch(function () {}).then(function () {
+          show(firstStep());
+        });
+      });
+
+      $("btn-disconnect").addEventListener("click", function () {
+        var id = this.dataset.id;
+        var go = function () {
+          api("DELETE", "/api/accounts/" + id).then(loadAccounts).catch(function (e) {
+            statusEl.hidden = false; statusEl.className = "error"; statusEl.textContent = e.message;
+          });
+        };
+        if (tg.showConfirm) {
+          tg.showConfirm("Отключить аккаунт и удалить сохранённую сессию?", function (ok) { if (ok) { go(); } });
+        } else if (window.confirm("Отключить аккаунт и удалить сохранённую сессию?")) { go(); }
+      });
+
+      api("GET", "/api/me")
         .then(function (me) {
+          accepted = !!me.terms_accepted;
           statusEl.hidden = true;
-          cardEl.hidden = false;
-          document.getElementById("hello").textContent =
-            "Привет, " + (me.first_name || "друг") + "! Регистрация выполнена.";
-          document.getElementById("meta").textContent =
-            "Ваш ID в сервисе: " + me.id;
+          $("main").hidden = false;
+          $("hello").textContent = "Привет, " + (me.first_name || "друг") + "!";
+          return loadAccounts();
         })
         .catch(function () {
           statusEl.textContent = "Не удалось войти. Закройте и откройте приложение заново.";
