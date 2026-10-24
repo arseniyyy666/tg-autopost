@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TG Autopost</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0; padding: 20px;
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--tg-theme-bg-color, #ffffff);
+      color: var(--tg-theme-text-color, #111111);
+    }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .card {
+      background: var(--tg-theme-secondary-bg-color, #f1f1f1);
+      border-radius: 12px; padding: 16px; margin-top: 12px;
+    }
+    .muted { color: var(--tg-theme-hint-color, #777777); font-size: 14px; }
+    .error { color: #d33; }
+  </style>
+</head>
+<body>
+  <h1>TG Autopost</h1>
+  <div id="status" class="muted">Загрузка…</div>
+  <div id="card" class="card" hidden>
+    <div id="hello"></div>
+    <div id="meta" class="muted"></div>
+  </div>
+
+  <script>
+    (function () {
+      var tg = window.Telegram && window.Telegram.WebApp;
+      var statusEl = document.getElementById("status");
+      var cardEl = document.getElementById("card");
+
+      if (!tg || !tg.initData) {
+        statusEl.textContent = "Откройте приложение из Telegram через кнопку в боте.";
+        statusEl.className = "error";
+        return;
+      }
+      tg.ready();
+      tg.expand();
+
+      fetch("/api/me", { headers: { "Authorization": "tma " + tg.initData } })
+        .then(function (r) {
+          if (!r.ok) { throw new Error("HTTP " + r.status); }
+          return r.json();
+        })
+        .then(function (me) {
+          statusEl.hidden = true;
+          cardEl.hidden = false;
+          document.getElementById("hello").textContent =
+            "Привет, " + (me.first_name || "друг") + "! Регистрация выполнена.";
+          document.getElementById("meta").textContent =
+            "Ваш ID в сервисе: " + me.id;
+        })
+        .catch(function () {
+          statusEl.textContent = "Не удалось войти. Закройте и откройте приложение заново.";
+          statusEl.className = "error";
+        });
+    })();
+  </script>
+</body>
+</html>
